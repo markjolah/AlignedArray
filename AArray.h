@@ -1,10 +1,13 @@
 /** @file AArray.h
  * @author Mark J. Olah (mjo\@cs.unm DOT edu)
  * @date 2018
- * @brief 
+ * @brief Aligned array container gaurentees each element is aligned as specified.
  * 
- * A type to hold an array of (largeish) objects so that adjacent elements are
- * never on the same cache line.  This prevents false sharing of elements.
+ * An major use case is to prevent false sharing in a set of elements in an array.  This works best with
+ * medium or large objects so that adjacent elements are never on the same cache line, but otherwise minimal
+ * space is wasted internally.
+ * 
+ * Full STL iterator semantics are provided.
  * 
  */
 #ifndef _ALIGNED_ARRAY_AARRAY_H
@@ -16,40 +19,37 @@
 #include <exception>
 #include <iterator>
 #include <utility>
-
-#include "ParallelRngManager/cache_alignment.h"
-
-
-#ifdef PARALLEL_RNG_DEBUG
-    #include "ParallelRngManager/debug/debug_assert.h"
-    #ifndef PARALLEL_RNG_DEBUG_LEVEL
-        #define PARALLEL_RNG_DEBUG_LEVEL 1 // macro to control assertion level
-    #endif
-    namespace aligned_array{ namespace assert {
-        struct handler : debug_assert::default_handler,
-                        debug_assert::set_level<PARALLEL_RNG_DEBUG_LEVEL> 
-        { };
-    } } /*namespace parallel_rng::assert */
-    //ASSERT_SETUP can wrap code only necessary for calling assert statements
-    #ifndef ASSERT_SETUP
-        #define ASSERT_SETUP(x) x
-    #endif
-#elif
-    //Expand DEBUG_ASSERT to empty
-    #ifndef DEBUG_ASSERT
-        #define DEBUG_ASSERT(...)
-    #endif
-
-    //Expand ASSERT_SETUP to empty
-    #ifndef ASSERT_SETUP
-        #define ASSERT_SETUP(...)
-    #endif
-#endif
-
+#include <fstream>
+#include <algorithm>
 
 namespace aligned_array
 {
-
+    
+namespace alignment
+{
+    //A safe default value (as large as likely for most platforms)
+    inline constexpr std::size_t default_cache_alignment() 
+    { return 64; }
+    
+    inline 
+    std::size_t estimate_cache_alignment()
+    {
+        #if defined(__linux__)
+            std::ifstream coherency_line_size;
+            coherency_line_size.open("/sys/devices/system/cpu/cpu0/cache/index0/coherency_line_size");
+            if(!coherency_line_size) return default_cache_alignment();
+            std::size_t cache_line_size;
+            coherency_line_size >> cache_line_size;
+            coherency_line_size.close();
+            if(cache_line_size < 16) return default_cache_alignment(); //Something went wrong;
+            return cache_line_size;
+        #else
+            return default_cache_alignment();
+        #endif
+    }
+}
+    
+    
 //Forward declare namespace scope operators
 template<class T>
 class AArray;
@@ -84,7 +84,7 @@ public:
     using iterator = Iterator<false>;
     using const_iterator = Iterator<true>;
     
-    AArray(size_type max_size, size_type align = parallel_rng::cache_alignment::CacheAlignment)
+    AArray(size_type max_size, size_type align = alignment::default_cache_alignment())
         : _max_size{max_size},
           _size{0},
           align_bits{ (small_size_type) std::ceil(std::log2(align)) },
@@ -246,7 +246,7 @@ private:
         if(!first) return;
         auto hidden_buf = reinterpret_cast<ByteT**>(first) - 1;
         ByteT *buf = *hidden_buf; //Retrieve buf pointer from the extra align sized space before first;
-        DEBUG_ASSERT( first-buf <= difference_type(align()) , assert::handler{},"Hidden buf pointer is corrupted! Ouch!");
+        //DEBUG_ASSERT( first-buf <= difference_type(align()) , assert::handler{},"Hidden buf pointer is corrupted! Ouch!");
         delete[](buf);
         first = nullptr;
     }
