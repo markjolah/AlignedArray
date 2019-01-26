@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cmath>
 #include <exception>
+#include <stdexcept>
 #include <iterator>
 #include <utility>
 #include <fstream>
